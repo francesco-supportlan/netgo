@@ -252,7 +252,7 @@ install_packages() {
 
   # Install the Rust toolchain only if we will actually build locally, i.e. no
   # --binaries-url and DIST_BASE is still the placeholder (sources present).
-  if [[ -z "$BINARIES_URL" && "$DIST_BASE" == *francesco-supportlan* ]]; then
+  if [[ -z "$BINARIES_URL" && "$DIST_BASE" == *YOUR_GH_USER* ]]; then
     apt-get install -y -qq build-essential pkg-config libssl-dev >/dev/null
     if ! command -v cargo >/dev/null; then
       warn "Rust not found: installing via rustup (may take a few minutes)"
@@ -276,7 +276,7 @@ install_binaries() {
   #   1. --binaries-url if provided
   #   2. otherwise DIST_BASE (public Releases), unless it still has the placeholder
   local url="$BINARIES_URL"
-  if [[ -z "$url" && "$DIST_BASE" != *francesco-supportlan* ]]; then
+  if [[ -z "$url" && "$DIST_BASE" != *YOUR_GH_USER* ]]; then
     url="$DIST_BASE"
   fi
 
