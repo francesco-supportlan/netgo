@@ -22,14 +22,14 @@ set -euo pipefail
 # ============================================================================
 # Fixed hub parameters (consistent with validated production)
 # ============================================================================
-HUB_PSK_ID="mgmt-fgt-hub"          # hub PSK identity (peer ID on the FortiGate side)
-POOL_CIDR="10.8.0.0/24"            # road warrior pool (override with --pool)
-POOL_RANGE=""                      # derived from POOL_CIDR unless --pool-range given
-RW_TS="100.127.255.0/24"           # management subnet advertised to road warriors
-VTI_NET="10.255.0"                 # hub .1 ; FGT-N -> .(N+1)
-HUB_AS=65000
-SPOKE_AS=65001
-NETGO_ORG="NetGo"
+HUB_PSK_ID="mgmt-fgt-hub"          # hub PSK identity / FGT peer ID   (--psk-id)
+POOL_CIDR="10.8.0.0/24"            # road warrior pool                (--pool)
+POOL_RANGE=""                      # derived from POOL_CIDR unless    (--pool-range)
+RW_TS="100.127.255.0/24"           # management subnet to road warriors (--rw-subnet)
+VTI_NET="10.255.0"                 # BGP transit /24 (hub .1, FGT-N .(N+1)) (--vti-net)
+HUB_AS=65000                       # hub BGP AS                       (--hub-as)
+SPOKE_AS=65001                     # FortiGate spokes BGP AS          (--spoke-as)
+NETGO_ORG="NetGo"                  # cert organization                (--org)
 
 # Final locations
 PKI_DIR="/etc/netgo/pki"
@@ -60,6 +60,11 @@ while [[ $# -gt 0 ]]; do
     --org)          NETGO_ORG="$2"; shift 2 ;;
     --pool)         POOL_CIDR="$2"; shift 2 ;;
     --pool-range)   POOL_RANGE_ARG="$2"; shift 2 ;;
+    --psk-id)       HUB_PSK_ID="$2"; shift 2 ;;
+    --rw-subnet)    RW_TS="$2"; shift 2 ;;
+    --vti-net)      VTI_NET="$2"; shift 2 ;;
+    --hub-as)       HUB_AS="$2"; shift 2 ;;
+    --spoke-as)     SPOKE_AS="$2"; shift 2 ;;
     -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1"; exit 1 ;;
   esac
