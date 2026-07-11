@@ -1,0 +1,51 @@
+# netgo-hub: deploy a NetGo hub in one command
+
+Installs a complete hub on a fresh Ubuntu/Debian VM: multi-FortiGate IKEv2 VPN
+(strongSwan + FRR/BGP), iOS road warrior (EAP secret-per-device), enrollment service
+(Sign in with Apple + QR), local PKI, firewall. Portable (any VM, any arch).
+
+## Machine requirements
+
+Persistent VM with a public IP (IPsec needs the kernel XFRM stack; serverless and
+containers are not suitable).
+
+- OS: Ubuntu 22.04/24.04 LTS or Debian 12 (systemd).
+- Arch: x86_64 or aarch64 (auto-detected).
+- 1 vCPU / 1 GB RAM / 10 GB disk (2 GB RAM recommended if building binaries locally).
+- Public IPv4 with inbound UDP 500, UDP 4500, TCP 8443 open upstream.
+- Root (sudo) to run the installer.
+
+See `TROUBLESHOOTING.md` for post-install checks, FortiGate spoke verification, and
+common issues.
+
+## Deployment
+
+On the fresh VM (single command):
+
+    sudo ./deploy/netgo-install-hub.sh
+
+Options:
+    --ip <address>          public IP (auto-detected if omitted)
+    --wan <iface>           WAN interface (default route if omitted)
+    --binaries-url <url>    pre-built binaries (local build if omitted)
+    --pool <cidr>           road warrior pool (default 10.8.0.0/24)
+    --pool-range <a-b>      explicit pool range (derived from --pool otherwise)
+
+At the end, the script prints the FortiGate PSK (to configure on each FGT) and the
+root_fp (used in enrollment QR codes).
+
+## PKI model
+
+Self-contained per hub: root + intermediate generated locally on the VM. Each hub is
+its own authority. The app pins this hub's root_fp via the QR code.
+
+## Layout
+
+    deploy/netgo-install-hub.sh   the install command
+    TROUBLESHOOTING.md            requirements and diagnostics
+
+## After installation
+
+    sudo netgo-enroll-qr --label "Name" --ttl-hours 72   # activation token + QR
+    curl -k https://127.0.0.1:8443/health                # health (use localhost if behind NAT)
+    sudo swanctl --list-conns 2>/dev/null                # VPN connections

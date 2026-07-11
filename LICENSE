@@ -1,0 +1,45 @@
+NetGo Hub License
+
+Copyright (c) 2026 Netdev. All rights reserved.
+
+1. Definitions
+   "Software" means the installation script, documentation, and compiled binaries
+   distributed in this repository and its releases.
+   "You" means the individual or entity exercising the permissions granted here.
+
+2. Permission to use
+   You are granted a non-exclusive, non-transferable, revocable license to download
+   and run the Software for the sole purpose of deploying and operating a NetGo hub.
+
+3. Restrictions
+   You may NOT, in whole or in part:
+   (a) redistribute, republish, sublicense, sell, rent, lease, or otherwise make the
+       Software available to any third party;
+   (b) modify, adapt, translate, reverse engineer, decompile, or disassemble the
+       Software, or create derivative works from it;
+   (c) remove or alter any copyright, license, or proprietary notices.
+
+4. Ownership
+   The Software is licensed, not sold. All right, title, and interest in and to the
+   Software, including all intellectual property rights, remain with Netdev.
+
+5. No warranty
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+   FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. The Software configures VPN,
+   firewall, routing, and PKI components; You are solely responsible for its
+   deployment, configuration, and security in your environment.
+
+6. Limitation of liability
+   IN NO EVENT SHALL NETDEV BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY,
+   WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN
+   CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+7. Termination
+   This license terminates automatically if You breach any of its terms. Upon
+   termination, You must stop using and delete all copies of the Software.
+
+8. Reserved rights
+   Any use not expressly permitted by this license is reserved to Netdev. For
+   redistribution, modification, or commercial arrangements beyond the permission
+   in Section 2, contact Netdev to obtain a separate written agreement.
