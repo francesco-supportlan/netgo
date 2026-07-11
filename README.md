@@ -22,7 +22,7 @@ common issues.
 
 On the fresh VM (single command):
 
-    curl -fsSL https://raw.githubusercontent.com/YOUR_GH_USER/netgo/main/deploy/netgo-install-hub.sh \
+    curl -fsSL https://raw.githubusercontent.com/francesco-molino/netgo/main/deploy/netgo-install-hub.sh \
       | sudo bash -s -- --ip <public_ip>
 
 The script detects the architecture and downloads the matching pre-built binaries
@@ -48,7 +48,7 @@ with your existing addressing or AS numbering):
 
 Example with a custom pool and AS numbers:
 
-    curl -fsSL https://raw.githubusercontent.com/YOUR_GH_USER/netgo/main/deploy/netgo-install-hub.sh \
+    curl -fsSL https://raw.githubusercontent.com/francesco-molino/netgo/main/deploy/netgo-install-hub.sh \
       | sudo bash -s -- --ip 203.0.113.10 --pool 192.168.50.0/24 --hub-as 64512 --spoke-as 64513
 
 At the end, the script prints the FortiGate PSK (to configure on each FGT) and the
