@@ -16,12 +16,20 @@
 # Without --pool: road warrior pool defaults to 10.8.0.0/24.
 #   --pool 192.168.50.0/24 changes the pool; the .10-.250 range is derived,
 #   or set it explicitly with --pool-range 192.168.50.20-192.168.50.200.
+#
+# BGP / topology options (defaults match the validated production hub):
+#   --psk-id <id>           FortiGate peer/PSK identity (default mgmt-fgt-hub)
+#   --rw-subnet <cidr>      management subnet advertised to clients (default 100.127.255.0/24)
+#   --vti-net <prefix>      BGP transit /24 prefix, no last octet (default 10.255.0)
+#   --hub-as <n>            hub BGP AS number (default 65000)
+#   --spoke-as <n>          FortiGate spokes BGP AS number (default 65001)
 
 set -euo pipefail
 
 # ============================================================================
 # Fixed hub parameters (consistent with validated production)
 # ============================================================================
+# All of these can be overridden with the matching command-line option.
 HUB_PSK_ID="mgmt-fgt-hub"          # hub PSK identity / FGT peer ID   (--psk-id)
 POOL_CIDR="10.8.0.0/24"            # road warrior pool                (--pool)
 POOL_RANGE=""                      # derived from POOL_CIDR unless    (--pool-range)
@@ -39,9 +47,6 @@ EAP_DIR="/var/lib/netgo/eap"
 BIN_DIR="/usr/local/bin"
 SBIN_DIR="/usr/local/sbin"
 
-# Default binaries source: public GitHub Releases of the distribution repo.
-# EDIT THIS with your GitHub username/org and public repo name.
-# Assets must be named: netgo-signer-<arch> and netgo-frontal-<arch> (arch = x86_64|aarch64).
 DIST_BASE="https://github.com/francesco-supportlan/netgo/releases/latest/download"
 
 # ============================================================================
@@ -143,19 +148,19 @@ ensure_users() {
 # Module 2: local PKI (model A: root + intermediate on the hub)
 # ============================================================================
 generate_pki() {
-  say "Generating local PKI (root + intermediate)"
+  say "Generating local PKI (root + intermediate, ECDSA P-256)"
 
   mkdir -p "$PKI_DIR"
   chmod 755 "$PKI_DIR"
   local work; work="$(mktemp -d)"
 
   # --- Root (self-signed) ---
-  openssl genrsa -out "$work/root.key.pem" 4096 2>/dev/null
+  openssl ecparam -name prime256v1 -genkey -noout -out "$work/root.key.pem" 2>/dev/null
   openssl req -x509 -new -key "$work/root.key.pem" -sha256 -days 7300 \
     -subj "/CN=NetGo Root CA/O=${NETGO_ORG}" -out "$work/root.crt.pem"
 
   # --- Intermediate (signed by the root) ---
-  openssl genrsa -out "$work/intermediate.key.pem" 4096 2>/dev/null
+  openssl ecparam -name prime256v1 -genkey -noout -out "$work/intermediate.key.pem" 2>/dev/null
   openssl req -new -key "$work/intermediate.key.pem" \
     -subj "/CN=NetGo Intermediate CA ($(hostname))/O=${NETGO_ORG}" \
     -out "$work/intermediate.csr.pem"
@@ -172,12 +177,13 @@ EXT
   cat "$work/intermediate.crt.pem" "$work/root.crt.pem" > "$work/chain.pem"
 
   # --- VPN server cert (signed by the intermediate) ---
-  openssl genrsa -out "$work/vpn-server.key.pem" 2048 2>/dev/null
+  # server cert SAN to match p.remoteIdentifier). Here remote_id = PUBLIC_IP.
+  openssl ecparam -name prime256v1 -genkey -noout -out "$work/vpn-server.key.pem" 2>/dev/null
   openssl req -new -key "$work/vpn-server.key.pem" \
     -subj "/CN=$PUBLIC_IP/O=${NETGO_ORG}" -out "$work/vpn-server.csr.pem"
   cat > "$work/srv.ext" <<EXT
 basicConstraints=CA:FALSE
-keyUsage=critical,digitalSignature,keyEncipherment
+keyUsage=critical,digitalSignature
 extendedKeyUsage=serverAuth
 subjectAltName=IP:$PUBLIC_IP
 EXT
@@ -187,7 +193,8 @@ EXT
     -out "$work/vpn-server.crt.pem"
 
   # --- Frontal TLS cert (signed by the intermediate) ---
-  openssl genrsa -out "$work/tls.key.pem" 2048 2>/dev/null
+  openssl ecparam -name prime256v1 -genkey -noout -out "$work/tls.key.sec1.pem" 2>/dev/null
+  openssl pkcs8 -topk8 -nocrypt -in "$work/tls.key.sec1.pem" -out "$work/tls.key.pem" 2>/dev/null
   openssl req -new -key "$work/tls.key.pem" \
     -subj "/CN=$PUBLIC_IP/O=${NETGO_ORG}" -out "$work/tls.csr.pem"
   cat > "$work/tls.ext" <<EXT
@@ -250,8 +257,6 @@ install_packages() {
     >/dev/null
   ok "base packages installed"
 
-  # Install the Rust toolchain only if we will actually build locally, i.e. no
-  # --binaries-url and DIST_BASE is still the placeholder (sources present).
   if [[ -z "$BINARIES_URL" && "$DIST_BASE" == *YOUR_GH_USER* ]]; then
     apt-get install -y -qq build-essential pkg-config libssl-dev >/dev/null
     if ! command -v cargo >/dev/null; then
@@ -272,22 +277,17 @@ SRC_DIR_DEFAULT="$(cd "$(dirname "$0")/.." 2>/dev/null && pwd)/src"
 install_binaries() {
   say "Binaries netgo-signer / netgo-frontal"
 
-  # Resolve the binaries source URL:
-  #   1. --binaries-url if provided
-  #   2. otherwise DIST_BASE (public Releases), unless it still has the placeholder
   local url="$BINARIES_URL"
   if [[ -z "$url" && "$DIST_BASE" != *YOUR_GH_USER* ]]; then
     url="$DIST_BASE"
   fi
 
   if [[ -n "$url" ]]; then
-    # Convention: <url>/netgo-signer-<arch> and <url>/netgo-frontal-<arch>
     curl -fsSL "$url/netgo-signer-$BIN_ARCH"  -o "$BIN_DIR/netgo-signer"  || die "signer download failed ($url)"
     curl -fsSL "$url/netgo-frontal-$BIN_ARCH" -o "$BIN_DIR/netgo-frontal" || die "frontal download failed ($url)"
     chmod 755 "$BIN_DIR/netgo-signer" "$BIN_DIR/netgo-frontal"
     ok "binaries downloaded ($BIN_ARCH) from $url"
   else
-    # Local build fallback (only when sources are present next to the script).
     local src="${NETGO_SRC_DIR:-$SRC_DIR_DEFAULT}"
     [[ -f "$src/Cargo.toml" ]] || die "no --binaries-url set, DIST_BASE not configured, and no Rust source in $src"
     say "Local build (may take several minutes)"
@@ -301,7 +301,7 @@ install_binaries() {
 # ============================================================================
 # Module 5: strongSwan (fgt + roadwarrior + swanctl.conf)
 # ============================================================================
-PSK=""   # generated here, shown at the end
+PSK=""   
 
 configure_strongswan() {
   say "Configuring strongSwan"
@@ -384,8 +384,6 @@ pools {
 }
 EOF
 
-  # --- swanctl.conf: include conf.d (EAP secrets arrive via conf.d, copied
-  #     by the reload service; the absolute include does not work, see prod) ---
   cat > /etc/swanctl/swanctl.conf <<EOF
 # Include config snippets
 include conf.d/*.conf
@@ -393,9 +391,6 @@ EOF
 
   ok "fgt + ios-rw connections written (PSK generated)"
 
-  # Reduce plugin-load noise. The "plugin 'x': failed to load" lines come from
-  # swanctl/charon trying optional plugins whose .so are not installed. We lower
-  # the library loader log level so these lines stop cluttering command output.
   mkdir -p /etc/strongswan.d
   cat > /etc/strongswan.d/99-netgo-quiet.conf <<'EOF'
 # NetGo: quiet the optional-plugin load failures on swanctl/charon startup.
@@ -472,7 +467,6 @@ BUNDLE_ID="${NETGO_BUNDLE_ID:-me.netdev.netgo}"
 configure_enrollment() {
   say "Enrollment service (signer + frontal)"
 
-  # Directories (users already created by ensure_users).
   mkdir -p "$STATE_DIR" "$EAP_DIR"
   chown -R netgo-signer:netgo "$STATE_DIR"
   chmod 750 "$STATE_DIR" "$EAP_DIR"
@@ -545,7 +539,6 @@ CapabilityBoundingSet=
 WantedBy=multi-user.target
 EOF
 
-  # Reload des secrets EAP : copie vers conf.d + load-creds (root).
   cat > /etc/systemd/system/netgo-eap-reload.service <<EOF
 [Unit]
 Description=Reload strongSwan credentials after NetGo EAP secrets change
@@ -572,7 +565,6 @@ EOF
 
   ok "enrollment units and directories in place"
 
-  # Install the QR enrollment generator on the hub.
   install_qr_tool
 }
 
@@ -583,7 +575,9 @@ install_qr_tool() {
   cat > "$BIN_DIR/netgo-enroll-qr" <<EOF
 #!/usr/bin/env bash
 # netgo-enroll-qr : generate an enrollment QR code for one user.
-# Encodes netgo://enroll?host=&port=&token=&root_fp=&vpn= into a QR (PNG + terminal).
+# Encodes netgo://enroll?host=&port=&token=&root_fp=&root=&vpn= into a QR (PNG).
+# The root= field carries the full root certificate (base64url DER, no padding),
+# so the app can anchor trust directly without the server presenting the root.
 set -euo pipefail
 
 HUB_HOST="$PUBLIC_IP"
@@ -608,7 +602,10 @@ done
 command -v qrencode >/dev/null || { echo "qrencode missing (apt install qrencode)"; exit 1; }
 [[ -f "\$ROOT_CERT" ]] || { echo "root cert not found: \$ROOT_CERT"; exit 1; }
 
-ROOT_FP=\$(openssl x509 -in "\$ROOT_CERT" -noout -fingerprint -sha256 | sed 's/.*=//' | tr -d ':')
+# root fingerprint: SHA-256 of the DER, uppercase hex, no colons.
+ROOT_FP=\$(openssl x509 -in "\$ROOT_CERT" -outform DER | openssl dgst -sha256 -hex | awk '{print \$NF}' | tr 'a-f' 'A-F')
+# root certificate itself: base64url of the DER, no padding.
+ROOT_B64=\$(openssl x509 -in "\$ROOT_CERT" -outform DER | base64 -w0 | tr '+/' '-_' | tr -d '=')
 
 INVITE_OUT=\$(sudo -u netgo-signer \\
   NETGO_DB="\$NETGO_DB" NETGO_MASTER_KEY="\$NETGO_MASTER_KEY" \\
@@ -617,17 +614,18 @@ INVITE_OUT=\$(sudo -u netgo-signer \\
 TOKEN=\$(echo "\$INVITE_OUT" | awk 'NF{last=\$0} END{gsub(/^[[:space:]]+/,"",last); print last}')
 [[ -n "\$TOKEN" && \${#TOKEN} -ge 16 ]] || { echo "failed to extract token:"; echo "\$INVITE_OUT"; exit 1; }
 
-URL="netgo://enroll?host=\${HUB_HOST}&port=\${HUB_PORT}&token=\${TOKEN}&root_fp=\${ROOT_FP}&vpn=\${VPN_ADDR}"
+URL="netgo://enroll?host=\${HUB_HOST}&port=\${HUB_PORT}&token=\${TOKEN}&root_fp=\${ROOT_FP}&root=\${ROOT_B64}&vpn=\${VPN_ADDR}"
 [[ -n "\$OUT" ]] || OUT="enroll-\$(echo "\$LABEL" | tr -c '[:alnum:]' '_').png"
 
-qrencode -o "\$OUT" -s 8 -m 2 "\$URL"
+# The root cert makes the QR dense; use low error-correction to keep it scannable.
+qrencode -o "\$OUT" -s 10 -m 3 -l L "\$URL"
 echo "Activation token : \$TOKEN"
 echo "Enrollment URL   : \$URL"
+echo "URL length       : \$(echo -n "\$URL" | wc -c) chars"
 echo "QR PNG written   : \$OUT"
 echo ""
-qrencode -t ANSIUTF8 "\$URL"
-echo ""
 echo "Valid \${TTL_HOURS}h, single use. Send the PNG to: \$LABEL"
+echo "Scan the PNG (the QR is dense; the terminal render is omitted on purpose)."
 EOF
   chmod 755 "$BIN_DIR/netgo-enroll-qr"
   ok "QR generator installed: netgo-enroll-qr"
@@ -639,7 +637,6 @@ EOF
 configure_network() {
   say "Network (forwarding, firewall, persistence scripts)"
 
-  # --- sysctl ---
   cat > /etc/sysctl.d/99-netgo.conf <<EOF
 net.ipv4.ip_forward=1
 net.ipv4.conf.all.rp_filter=2
@@ -647,9 +644,6 @@ net.ipv4.conf.default.rp_filter=2
 EOF
   sysctl -p /etc/sysctl.d/99-netgo.conf >/dev/null
 
-  # --- NETGO-FWD chain (replaces the DOCKER-USER dependency) ---
-  # Created then referenced at the top of FORWARD to run BEFORE any REJECT
-  # (fixes the default FORWARD REJECT trap on some clouds).
   iptables-nft -N NETGO-FWD 2>/dev/null || true
   iptables-nft -C FORWARD -j NETGO-FWD 2>/dev/null || iptables-nft -I FORWARD 1 -j NETGO-FWD
   # Established returns for the pool.
@@ -663,7 +657,6 @@ EOF
   iptables-nft -C INPUT -p tcp --dport 8443 -j ACCEPT 2>/dev/null || iptables-nft -I INPUT -p tcp --dport 8443 -j ACCEPT
 
   # --- Persistence scripts ---
-  # fgt-updown.sh: one XFRM interface per FGT, rules in NETGO-FWD (not DOCKER-USER).
   cat > "$SBIN_DIR/fgt-updown.sh" <<EOF
 #!/bin/bash
 # Une interface XFRM par FortiGate. N derive du localid fgt-N.
@@ -701,7 +694,6 @@ exit 0
 EOF
   chmod 755 "$SBIN_DIR/fgt-updown.sh"
 
-  # ipsec-hub.sh: dummy-pool (BGP advertisement) + bidirectional MSS clamp.
   cat > "$SBIN_DIR/ipsec-hub.sh" <<EOF
 #!/bin/bash
 # Hub VPN multi-FGT : pool (annonce BGP via dummy) + MSS. Idempotent.
@@ -716,7 +708,6 @@ exit 0
 EOF
   chmod 755 "$SBIN_DIR/ipsec-hub.sh"
 
-  # rw-route.sh: no-op in multi-FGT (return via XFRM policies), kept for config.
   cat > "$SBIN_DIR/rw-route.sh" <<EOF
 #!/bin/bash
 # In multi-FGT, return traffic to clients goes through the roadwarrior XFRM policies.
@@ -724,7 +715,6 @@ exit 0
 EOF
   chmod 755 "$SBIN_DIR/rw-route.sh"
 
-  # Oneshot service for ipsec-hub.sh at boot.
   cat > /etc/systemd/system/ipsec-hub.service <<EOF
 [Unit]
 Description=NetGo hub boot setup (dummy-pool, MSS)
