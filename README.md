@@ -69,3 +69,12 @@ its own authority. The app pins this hub's root_fp via the QR code.
     sudo netgo-enroll-qr --label "Name" --ttl-hours 72   # activation token + QR
     curl -k https://127.0.0.1:8443/health                # health (use localhost if behind NAT)
     sudo swanctl --list-conns 2>/dev/null                # VPN connections
+
+## Retrait propre, garde les données (pour réinstaller ensuite)
+    sudo ./netgo-uninstall-hub.sh
+
+## Tout effacer
+    sudo ./netgo-uninstall-hub.sh --purge
+
+## Sans confirmation (tests automatisés)
+    sudo ./netgo-uninstall-hub.sh --purge --yes
