@@ -75,8 +75,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Derive the pool allocation range from the CIDR unless explicitly provided.
-# For a /24 like 10.8.0.0/24 -> 10.8.0.10-10.8.0.250.
 derive_pool_range() {
   if [[ -n "$POOL_RANGE_ARG" ]]; then
     POOL_RANGE="$POOL_RANGE_ARG"
@@ -121,7 +119,6 @@ detect_env() {
 
   # Public IP: override, otherwise detect.
   if [[ -z "$PUBLIC_IP" ]]; then
-    # Sequential generic attempts (no cloud-specific dependency).
     for svc in "https://api.ipify.org" "https://ifconfig.me/ip" "https://icanhazip.com"; do
       PUBLIC_IP=$(curl -fsS --max-time 5 "$svc" 2>/dev/null | tr -d '[:space:]' || true)
       [[ "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && break
@@ -177,7 +174,6 @@ EXT
   cat "$work/intermediate.crt.pem" "$work/root.crt.pem" > "$work/chain.pem"
 
   # --- VPN server cert (signed by the intermediate) ---
-  # server cert SAN to match p.remoteIdentifier). Here remote_id = PUBLIC_IP.
   openssl ecparam -name prime256v1 -genkey -noout -out "$work/vpn-server.key.pem" 2>/dev/null
   openssl req -new -key "$work/vpn-server.key.pem" \
     -subj "/CN=$PUBLIC_IP/O=${NETGO_ORG}" -out "$work/vpn-server.csr.pem"
@@ -207,10 +203,10 @@ EXT
     -CA "$work/intermediate.crt.pem" -CAkey "$work/intermediate.key.pem" \
     -CAcreateserial -sha256 -days 397 -extfile "$work/tls.ext" \
     -out "$work/tls.crt.pem"
+
   cat "$work/tls.crt.pem" "$work/intermediate.crt.pem" > "$work/tls.fullchain.pem"
 
   # --- Deploy to final locations ---
-  # PKI (frontal reads root.crt.pem; signer reads intermediate):
   install -m 644 "$work/root.crt.pem"          "$PKI_DIR/root.crt.pem"
   install -m 644 "$work/intermediate.crt.pem"  "$PKI_DIR/intermediate.crt.pem"
   install -m 644 "$work/chain.pem"             "$PKI_DIR/chain.pem"
@@ -283,6 +279,7 @@ install_binaries() {
   fi
 
   if [[ -n "$url" ]]; then
+    # Convention: <url>/netgo-signer-<arch> and <url>/netgo-frontal-<arch>
     curl -fsSL "$url/netgo-signer-$BIN_ARCH"  -o "$BIN_DIR/netgo-signer"  || die "signer download failed ($url)"
     curl -fsSL "$url/netgo-frontal-$BIN_ARCH" -o "$BIN_DIR/netgo-frontal" || die "frontal download failed ($url)"
     chmod 755 "$BIN_DIR/netgo-signer" "$BIN_DIR/netgo-frontal"
@@ -301,7 +298,7 @@ install_binaries() {
 # ============================================================================
 # Module 5: strongSwan (fgt + roadwarrior + swanctl.conf)
 # ============================================================================
-PSK=""   
+PSK="" 
 
 configure_strongswan() {
   say "Configuring strongSwan"
@@ -384,6 +381,7 @@ pools {
 }
 EOF
 
+  # --- swanctl.conf: include conf.d (EAP secrets arrive via conf.d, copied
   cat > /etc/swanctl/swanctl.conf <<EOF
 # Include config snippets
 include conf.d/*.conf
@@ -467,6 +465,7 @@ BUNDLE_ID="${NETGO_BUNDLE_ID:-me.netdev.netgo}"
 configure_enrollment() {
   say "Enrollment service (signer + frontal)"
 
+  # Directories (users already created by ensure_users).
   mkdir -p "$STATE_DIR" "$EAP_DIR"
   chown -R netgo-signer:netgo "$STATE_DIR"
   chmod 750 "$STATE_DIR" "$EAP_DIR"
@@ -565,6 +564,7 @@ EOF
 
   ok "enrollment units and directories in place"
 
+  # Install the QR enrollment generator on the hub.
   install_qr_tool
 }
 
@@ -575,7 +575,7 @@ install_qr_tool() {
   cat > "$BIN_DIR/netgo-enroll-qr" <<EOF
 #!/usr/bin/env bash
 # netgo-enroll-qr : generate an enrollment QR code for one user.
-# Encodes netgo://enroll?host=&port=&token=&root_fp=&root=&vpn= into a QR (PNG).
+# Encodes netgo://enroll?host=&port=&token=&root_fp=&root=&vpn= into a QR (PNG + terminal).
 # The root= field carries the full root certificate (base64url DER, no padding),
 # so the app can anchor trust directly without the server presenting the root.
 set -euo pipefail
@@ -589,12 +589,13 @@ export NETGO_MASTER_KEY="$STATE_DIR/master.key"
 export NETGO_SWANCTL_SECRETS="$EAP_DIR/secrets.conf"
 SIGNER_BIN="$BIN_DIR/netgo-signer"
 
-LABEL="user"; TTL_HOURS="72"; OUT=""
+LABEL="user"; TTL_HOURS="72"; OUT=""; TERM_QR=1
 while [[ \$# -gt 0 ]]; do
   case "\$1" in
     --label)     LABEL="\$2"; shift 2 ;;
     --ttl-hours) TTL_HOURS="\$2"; shift 2 ;;
     --out)       OUT="\$2"; shift 2 ;;
+    --no-term)   TERM_QR=0; shift ;;
     *) echo "unknown argument: \$1"; exit 1 ;;
   esac
 done
@@ -623,9 +624,15 @@ echo "Activation token : \$TOKEN"
 echo "Enrollment URL   : \$URL"
 echo "URL length       : \$(echo -n "\$URL" | wc -c) chars"
 echo "QR PNG written   : \$OUT"
-echo ""
 echo "Valid \${TTL_HOURS}h, single use. Send the PNG to: \$LABEL"
-echo "Scan the PNG (the QR is dense; the terminal render is omitted on purpose)."
+echo ""
+
+if [[ "\$TERM_QR" -eq 1 ]]; then
+  echo "=== Terminal QR (low error-correction to stay compact) ==="
+  echo "If it looks garbled, shrink the terminal font or scan the PNG instead."
+  echo ""
+  qrencode -t UTF8 -m 1 -l L "\$URL"
+fi
 EOF
   chmod 755 "$BIN_DIR/netgo-enroll-qr"
   ok "QR generator installed: netgo-enroll-qr"
@@ -637,6 +644,7 @@ EOF
 configure_network() {
   say "Network (forwarding, firewall, persistence scripts)"
 
+  # --- sysctl ---
   cat > /etc/sysctl.d/99-netgo.conf <<EOF
 net.ipv4.ip_forward=1
 net.ipv4.conf.all.rp_filter=2
@@ -743,7 +751,6 @@ start_services() {
   say "Starting services"
   systemctl daemon-reload
 
-  # Detect the strongSwan service name (varies: strongswan / strongswan-starter).
   local SS_SVC=""
   for cand in strongswan strongswan-starter; do
     if systemctl list-unit-files "${cand}.service" >/dev/null 2>&1 && \
@@ -754,17 +761,14 @@ start_services() {
   [[ -n "$SS_SVC" ]] || SS_SVC="strongswan"
   ok "strongSwan service: $SS_SVC"
 
-  # FRR: enable daemons then (re)start so bgpd comes up.
   systemctl enable frr >/dev/null 2>&1 || true
   systemctl restart frr >/dev/null 2>&1 || warn "frr: check status"
 
   systemctl enable --now ipsec-hub.service >/dev/null 2>&1 || warn "ipsec-hub: check status"
   systemctl enable --now "$SS_SVC" >/dev/null 2>&1 || warn "$SS_SVC: check status"
 
-  # Signer first (creates DB, master key, empty secrets file).
   systemctl enable --now netgo-signer >/dev/null 2>&1 || warn "netgo-signer: check status"
   sleep 1
-  # Generate the initial (empty) secrets file and enable the reload watcher.
   sudo -u netgo-signer \
     NETGO_DB=$STATE_DIR/enroll.db NETGO_MASTER_KEY=$STATE_DIR/master.key \
     NETGO_SWANCTL_SECRETS=$EAP_DIR/secrets.conf \
@@ -772,11 +776,9 @@ start_services() {
   systemctl enable --now netgo-eap-reload.path >/dev/null 2>&1 || true
   systemctl enable --now netgo-frontal >/dev/null 2>&1 || warn "netgo-frontal: check status"
 
-  # Load strongSwan config (needs charon running).
   sleep 1
   swanctl --load-all >/dev/null 2>&1 || warn "swanctl --load-all: check"
 
-  # Sanity: is the frontal actually listening?
   sleep 1
   if systemctl is-active --quiet netgo-frontal; then
     ok "services started"
