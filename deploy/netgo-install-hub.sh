@@ -200,7 +200,7 @@ EXT
     -CA "$work/intermediate.crt.pem" -CAkey "$work/intermediate.key.pem" \
     -CAcreateserial -sha256 -days 397 -extfile "$work/tls.ext" \
     -out "$work/tls.crt.pem"
-  cat "$work/tls.crt.pem" "$work/intermediate.crt.pem" "$work/root.crt.pem" > "$work/tls.fullchain.pem"
+  cat "$work/tls.crt.pem" "$work/intermediate.crt.pem" > "$work/tls.fullchain.pem"
 
   # --- Deploy to final locations ---
   # PKI (frontal reads root.crt.pem; signer reads intermediate):
