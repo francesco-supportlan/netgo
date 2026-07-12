@@ -70,11 +70,10 @@ its own authority. The app pins this hub's root_fp via the QR code.
     curl -k https://127.0.0.1:8443/health                # health (use localhost if behind NAT)
     sudo swanctl --list-conns 2>/dev/null                # VPN connections
 
-## Retrait propre, garde les données (pour réinstaller ensuite)
-    sudo ./netgo-uninstall-hub.sh
+## To delete everything
+    curl -fsSL https://raw.githubusercontent.com/francesco-supportlan/netgo/main/deploy/netgo-uninstall-hub.sh \
+  | sudo bash -s -- --purge
 
-## Tout effacer
-    sudo ./netgo-uninstall-hub.sh --purge
-
-## Sans confirmation (tests automatisés)
-    sudo ./netgo-uninstall-hub.sh --purge --yes
+## Without confirmation
+    curl -fsSL https://raw.githubusercontent.com/francesco-supportlan/netgo/main/deploy/netgo-uninstall-hub.sh \
+    | sudo bash -s -- --purge --yes
