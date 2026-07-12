@@ -8,7 +8,7 @@
 # Usage:
 #   sudo ./netgo-uninstall-hub.sh [--purge] [--yes]
 
-set -uo pipefail 
+set -uo pipefail
 
 PURGE=0
 ASSUME_YES=0
@@ -34,9 +34,22 @@ STATE_DIR="/var/lib/netgo"
 EAP_DIR="/var/lib/netgo/eap"
 BIN_DIR="/usr/local/bin"
 SBIN_DIR="/usr/local/sbin"
-POOL_CIDR="10.8.0.0/24"   # default; adjust if a custom --pool was used
+
+detect_pool() {
+  local p=""
+  if [[ -f /etc/frr/frr.conf ]]; then
+    p=$(grep -oE 'network [0-9.]+/[0-9]+' /etc/frr/frr.conf 2>/dev/null | awk '{print $2}' | head -1)
+  fi
+  if [[ -z "$p" && -f "$SBIN_DIR/ipsec-hub.sh" ]]; then
+    p=$(grep -oE 'ip route replace [0-9.]+/[0-9]+ dev dummy-pool' "$SBIN_DIR/ipsec-hub.sh" 2>/dev/null | awk '{print $4}' | head -1)
+  fi
+  [[ -n "$p" ]] || p="10.8.0.0/24"
+  echo "$p"
+}
+POOL_CIDR="$(detect_pool)"
 
 echo "This will remove the NetGo hub from this machine."
+echo "Detected road warrior pool: $POOL_CIDR"
 if [[ $PURGE -eq 1 ]]; then
   echo "MODE: --purge  (ALSO deletes $STATE_DIR and $PKI_DIR: DB, master key, root key)"
 else
@@ -55,7 +68,6 @@ for unit in netgo-frontal netgo-signer netgo-eap-reload.path netgo-eap-reload.se
   systemctl stop "$unit" 2>/dev/null && ok "stopped $unit" || true
   systemctl disable "$unit" 2>/dev/null || true
 done
-
 
 # ---------------------------------------------------------------------------
 # 2. Remove systemd units
@@ -79,11 +91,9 @@ rm -f /etc/swanctl/conf.d/fgt.conf \
       /etc/swanctl/x509ca/netgo-intermediate.pem \
       /etc/swanctl/x509ca/netgo-root.pem \
       /etc/strongswan.d/99-netgo-quiet.conf
-
 if [[ -f /etc/swanctl/swanctl.conf ]]; then
   sed -i '\#include /var/lib/netgo/eap/secrets.conf#d' /etc/swanctl/swanctl.conf 2>/dev/null || true
 fi
-
 swanctl --load-all >/dev/null 2>&1 || true
 ok "strongSwan config removed"
 
@@ -91,7 +101,6 @@ ok "strongSwan config removed"
 # 4. Remove FRR/BGP config added by NetGo
 # ---------------------------------------------------------------------------
 say "Removing FRR config"
-
 if [[ -f /etc/frr/frr.conf ]]; then
   : > /etc/frr/frr.conf
 fi
@@ -107,23 +116,18 @@ ok "FRR config reset"
 say "Removing network config"
 rm -f /etc/sysctl.d/99-netgo.conf && ok "removed sysctl drop-in" || true
 
-
 iptables-nft -D FORWARD -j NETGO-FWD 2>/dev/null || true
 iptables-nft -F NETGO-FWD 2>/dev/null || true
 iptables-nft -X NETGO-FWD 2>/dev/null || true
-
 iptables-nft -D INPUT -p udp --dport 500  -j ACCEPT 2>/dev/null || true
 iptables-nft -D INPUT -p udp --dport 4500 -j ACCEPT 2>/dev/null || true
 iptables-nft -D INPUT -p tcp --dport 8443 -j ACCEPT 2>/dev/null || true
-
 iptables-nft -t mangle -D FORWARD -s "$POOL_CIDR" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1300 2>/dev/null || true
 iptables-nft -t mangle -D FORWARD -d "$POOL_CIDR" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1300 2>/dev/null || true
-
 for ifc in $(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | grep -E '^ipsec[0-9]+$' || true); do
   ip link del "$ifc" 2>/dev/null && ok "removed interface $ifc" || true
 done
 ip link del dummy-pool 2>/dev/null && ok "removed dummy-pool" || true
-
 netfilter-persistent save >/dev/null 2>&1 || true
 ok "network config removed"
 
